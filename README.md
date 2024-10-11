@@ -11,14 +11,18 @@ provide a key or password, you will be prompted for a password.
 One file for easy `wget`/`curl`
 
 ```
-usage: sshspray.py [-h] [-q [QUEUE_SIZE]] [-k HOST_KEY_FILE] -u USER [-s PASSPHRASE] [-i KEY_FILE] [-p PASSWORD] [-P PORT] [-v] -t TARGET_LIST [-w [WAIT]]
+usage: sshspray.py [-h] [-q [QUEUE_SIZE]] [-k HOST_KEY_FILE] [-u USER] [-U USER_LIST] [-s PASSPHRASE] [-i KEY_FILE] [-p PASSWORD] [-P PORT] [-v] -t TARGET_LIST [-w [WAIT]]
 
-optional arguments:
+Multithreaded, queued SSH key and/or password spraying tool by M. Cory Billington
+
+options:
   -h, --help            show this help message and exit
   -q [QUEUE_SIZE], --queue-size [QUEUE_SIZE]
   -k HOST_KEY_FILE, --host-key-file HOST_KEY_FILE
                         Known hosts file (defaults to /dev/null)
   -u USER, --user USER  Username for ssh connection
+  -U USER_LIST, --user-list USER_LIST
+                        File containing usernames, one per line
   -s PASSPHRASE, --passphrase PASSPHRASE
                         Passphrase to unlock private key file
   -i KEY_FILE, --key-file KEY_FILE
